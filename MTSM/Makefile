@@ -1,4 +1,5 @@
-CUDA_ROOT = /software/cuda-10.1
+#CUDA_ROOT = /software/cuda-10.1
+CUDA_ROOT = /usr/local/cuda-12.2
 
 NVML_ROOT ?= $(CUDA_ROOT)
 NVML_INC ?= $(CUDA_ROOT)/include

@@ -15,10 +15,18 @@
 #include <cuda_runtime.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if _WIN32
+#include <windows.h>
+#include <stdio.h>
+#else
 #include <unistd.h>
+#include <pthread.h>
+#endif
+
 #include <nvml.h>
 #include <signal.h>
-#include <pthread.h>
+
 #include <iostream>     
 #include <algorithm>    
 #include <vector>
@@ -89,12 +97,22 @@ void end_monitoring(int sig) {
     flag = 1;
 }
 
-void * runMonitor(void *){
+
+#if _WIN32
+DWORD WINAPI runMonitorWin(LPVOID lpParam) {
     std::vector<float> powerArray;
     while(flag==0){
         monitor_power(device, &powerArray);
-        usleep(1/(50*1000000));
+        DWORD microseconds = 1/(50*1000000);
+        Sleep(microseconds / 1000);
     }
+
+    // Wait for time value to be set so Energy can be calculated correctly
+    while (flag != 2) {
+        DWORD microseconds = 1/(50*1000000);
+        Sleep(microseconds / 1000);
+    }
+
     int size = powerArray.size();
     float sum = std::accumulate(powerArray.begin(), powerArray.end(), 0);
     float power_result = sum/size;
@@ -103,6 +121,28 @@ void * runMonitor(void *){
     printf("Energy: %f J\n", result);
     return 0;
 }
+#else
+void * runMonitor(void *){
+    std::vector<float> powerArray;
+    while(flag==0){
+        monitor_power(device, &powerArray);
+        usleep(1/(50*1000000));
+    }
+
+    // Edit: Wait for time value to be set so Energy can be calculated correctly
+    while (flag != 2) {
+        usleep(1/(50*1000000));
+    }
+
+    int size = powerArray.size();
+    float sum = std::accumulate(powerArray.begin(), powerArray.end(), 0);
+    float power_result = sum/size;
+    float result = ((t*sum)/(size*1000));
+    printf("Average Power: %f W\n", power_result);
+    printf("Energy: %f J\n", result);
+    return 0;
+}
+#endif
 
 int main(int argc, const char* argv[]){
     //********************** Starting NVML Part **********************
@@ -148,10 +188,21 @@ int main(int argc, const char* argv[]){
     //********************** Finished NVML Part **********************
 
     //********************** NVML POWER START **********************
+    #if _WIN32
+    HANDLE threadHandle;
+    DWORD threadID;
+    threadHandle = CreateThread(NULL, 0, runMonitorWin, NULL, 0, &threadID);
+    if (threadHandle == NULL) {
+        printf("Thread Init Error\n");
+        return 1;
+    }
+    #else
     pthread_t thread_id;
     if(pthread_create(&thread_id, NULL, runMonitor, NULL)){
         printf("Thread Init Error\n");
     }
+    #endif
+
     //********************** NVML POWER END **********************
 
     int n=10;
@@ -179,6 +230,11 @@ int main(int argc, const char* argv[]){
     float time;
 
     startFlag = 1;
+
+    // Collect stats for Tensor utilization before/after
+    // nvmlGpmSample_t sample1;
+    // nvmlGpmSampleGet(device, sample1);
+
     //******* Starting Time Recording ***************
     cudaEventRecord(start, 0);
     cudaProfilerStart();
@@ -235,9 +291,42 @@ int main(int argc, const char* argv[]){
     cudaMemcpy(c, d_c, n * sizeof(int), cudaMemcpyDeviceToHost);
 
     t = time;
+    flag = 2; // Tell thread that time is finished so energy can be calculated
     printf("GPU Elapsed Time = %f ms\n",t);
 
+    #if _WIN32
+    if (WaitForSingleObject(threadHandle, INFINITE) == WAIT_FAILED) {
+        printf("Thread Wait Error\n");
+        return 1;
+    }
+    CloseHandle(threadHandle);
+    #else
     pthread_join(thread_id, NULL);
+    #endif
+
+    // TODO: Calculate energy here instead?
+
+    // Check for Tensor utilization
+    // nvmlGpmSample_t sample2;
+    // nvmlGpmSampleGet(device, sample2);
+    // nvmlGpmMetricsGet_t *metricsGet;
+    // metricsGet->numMetrics = 1;
+    // nvmlGpmMetric_t metrics[1];
+    // nvmlGpmMetric_t metric;
+    // metric.metricId = NVML_GPM_METRIC_ANY_TENSOR_UTIL;
+    // metrics[0] = metric;
+    // memcpy(metricsGet->metrics, metrics, 1*sizeof(nvmlGpmMetric_t));
+    // metricsGet->sample1 = sample1;
+    // metricsGet->sample2 = sample2;
+    // nvmlGpmMetricsGet(metricsGet);
+    // nvmlReturn_t metricresult = metricsGet->metrics[0].nvmlReturn;
+    // if (metricresult != NVML_SUCCESS) {
+    //     printf("Error getting NVML stats\n");
+    // }
+    // else {
+    //     printf("Got NVML stats!\n");
+    // }
+    
     shutdown_nvml();
   
     cudaEventDestroy(start);

@@ -1,0 +1,1 @@
+-D__CUDA_ARCH__=500 -D__CUDA_ARCH_LIST__=500 -D__NV_LEGACY_LAUNCH -nologo -c -TP  -DCUDA_DOUBLE_MATH_FUNCTIONS -EHsc "-IC:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin/../include"   "pipeline.cudafe1.cpp" 
